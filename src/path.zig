@@ -9,7 +9,7 @@
 //! are none of our business, and nothing here touches the filesystem.
 //!
 //! Backslashes are accepted on input, because that is what a Windows drag and
-//! drop or a `std.fs` call will hand you.
+//! drop or a `std.Io.Dir` call will hand you.
 
 const std = @import("std");
 const testing = std.testing;

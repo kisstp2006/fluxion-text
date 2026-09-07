@@ -1,6 +1,6 @@
 # Fluxion Text
 
-A UTF-8 string toolkit for Zig 0.16. Six pieces that fit together:
+A UTF-8 string toolkit for Zig 0.16. Eleven pieces that fit together:
 
 | Module | What it is |
 | --- | --- |
@@ -10,11 +10,6 @@ A UTF-8 string toolkit for Zig 0.16. Six pieces that fit together:
 | `utf8` | Encode, decode, validate, iterate, and boundary math. |
 | `number` | Integer, float and bool scanning that reports how many bytes it consumed. |
 | `Interner` | String interning: text in, a 4-byte `StringId` out. |
-
-Plus five aimed at game and tool work:
-
-| Module | What it is |
-| --- | --- |
 | `Fixed(n)` | A string held inline with no allocator at all. Safe as a hash-map key. |
 | `path` | Virtual asset paths: `basename`, `stem`, `extension`, `join`, `normalize`. |
 | `pattern` | Glob matching: `textures/*.png`, `**/*.wav`, `[0-9]`. |

@@ -2,7 +2,7 @@
 
 //! Fluxion Text - a UTF-8 string toolkit for Zig.
 //!
-//! Six pieces that fit together:
+//! Eleven pieces that fit together:
 //!
 //!   `View`     an immutable, non-owning window onto bytes
 //!   `Builder`  a growable, owning buffer that is also a `std.Io.Writer`
@@ -10,6 +10,11 @@
 //!   `utf8`     encode, decode, validate and boundary math
 //!   `number`   integer, float and bool scanning that reports what it consumed
 //!   `Interner` string interning, text in and a 4-byte `StringId` out
+//!   `Fixed`    a string held inline, with no allocator at all
+//!   `path`     virtual asset paths: basename, stem, extension, join, normalize
+//!   `pattern`  glob matching, both the plain and the path-aware kind
+//!   `fuzzy`    command-palette ranking and "did you mean?" suggestions
+//!   `wrap`     word wrapping measured by your own font metrics
 //!
 //! Nothing here allocates unless it takes an `Allocator`, and everything that
 //! allocates says who owns the result.
@@ -23,7 +28,6 @@ pub const Parser = @import("Parser.zig");
 pub const Interner = @import("Interner.zig");
 pub const utf8 = @import("utf8.zig");
 pub const number = @import("number.zig");
-
 pub const path = @import("path.zig");
 pub const pattern = @import("pattern.zig");
 pub const fuzzy = @import("fuzzy.zig");
