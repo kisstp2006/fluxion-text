@@ -1,16 +1,16 @@
 # Fluxion Text
 
-A UTF-8 string toolkit for Zig 0.16. Eleven pieces that fit together:
+A UTF-8 string toolkit for C3 0.8. Eleven pieces that fit together:
 
 | Module | What it is |
 | --- | --- |
-| `View` | An immutable, non-owning window onto bytes. Slicing, searching, splitting, trimming — all without copying. |
-| `Builder` | A growable, owning buffer that is also a `std.Io.Writer`. |
-| `Parser` | A cursor for hand-written parsers and lexers, with `peek` / `eat` / `expect` / `take` families and line-column diagnostics. |
+| `view` | An immutable, non-owning window onto bytes. Slicing, searching, splitting, trimming - all without copying. |
+| `builder` | A growable, owning buffer that is also an `OutStream`. |
+| `parser` | A cursor for hand-written parsers and lexers, with `peek` / `eat` / `expect` / `take` families and line-column diagnostics. |
 | `utf8` | Encode, decode, validate, iterate, and boundary math. |
 | `number` | Integer, float and bool scanning that reports how many bytes it consumed. |
-| `Interner` | String interning: text in, a 4-byte `StringId` out. |
-| `Fixed(n)` | A string held inline with no allocator at all. Safe as a hash-map key. |
+| `interner` | String interning: text in, a 4-byte `StringId` out. |
+| `fixed` | `Fixed{N}`, a string held inline with no allocator at all. Safe as a hash-map key. |
 | `path` | Virtual asset paths: `basename`, `stem`, `extension`, `join`, `normalize`. |
 | `pattern` | Glob matching: `textures/*.png`, `**/*.wav`, `[0-9]`. |
 | `fuzzy` | Command-palette ranking and "did you mean?" suggestions. |
@@ -21,292 +21,317 @@ allocates documents who owns the result.
 
 ## Install
 
-```bash
-zig fetch --save git+https://github.com/kisstp2006/fluxion-text
+The library is the `fluxion_text.c3l` directory in this repository. For a
+checkout next to your project, add to `project.json`:
+
+```json
+"dependency-search-paths": ["../fluxion-text"],
+"dependencies": ["fluxion_text"]
 ```
 
-Or, for a checkout next to your project, add to `build.zig.zon`:
+Then, in the code:
 
-```zig
-.dependencies = .{
-    .fluxion_text = .{ .path = "../fluxion-text" },
-},
+```c3
+import fluxion::text;
 ```
 
-Either way, wire it up in `build.zig`:
-
-```zig
-const fluxion = b.dependency("fluxion_text", .{
-    .target = target,
-    .optimize = optimize,
-});
-exe_mod.addImport("fluxion_text", fluxion.module("fluxion_text"));
-```
-
-```zig
-const text = @import("fluxion_text");
-```
+One import is the whole library: C3 imports a module's sub-modules with it, so
+`View`, `Parser`, `Builder`, `Interner` and the rest are all in scope from that
+line.
 
 ## Tour
 
-### View — read without copying
+Every routine that takes options takes a struct, and every option is named so
+that zero is the default: `{}` is "the defaults", `{ .ignore_case = true }`
+changes one thing. The options parameter can be left off altogether.
 
-```zig
-const line: text.View = .init("  host = localhost  ");
-const pair = line.trim().splitOnce("=").?;
-// pair.before.trim() == "host", pair.after.trim() == "localhost"
+### view - read without copying
+
+```c3
+View line = text::of("  host = localhost  ");
+Pair pair = line.trim().split_once("=")!;
+// pair.before.trim() is "host", pair.after.trim() is "localhost"
 ```
 
-`View` is a `[]const u8` with a vocabulary attached. Every operation returns
+`View` is a `char[]` with a vocabulary attached. Every operation returns
 another `View` into the *same* bytes, so lifetime is your responsibility: a
 `View` is valid for exactly as long as the memory behind it.
 
 Offsets are byte offsets. When you need to respect character boundaries there
-is `truncateBytes`, which backs off to the nearest one:
+is `truncate_bytes`, which backs off to the nearest one:
 
-```zig
-const label: text.View = .init("café 漢字");   // 12 bytes, 7 codepoints
-label.truncateBytes(5);                        // "café" — never a split character
+```c3
+View label = text::of("café 漢字");   // 12 bytes, 7 codepoints
+label.truncate_bytes(5);              // "café" - never a split character
 ```
 
-Also: `startsWith`, `endsWith`, `contains`, `indexOf`, `lastIndexOf`,
-`indexOfAny`, `count`, `trim`, `trimChars`, `chomp`, `stripPrefix`,
-`stripSuffix`, `split`, `splitScalar`, `splitAny`, `words`, `lines`,
-`splitOnce`, `splitLastOnce`, `codepoints`, `order`, `hash`, `toOwned`.
+Splitting is one `Splitter` with three modes rather than three iterator types,
+and it ends on a fault so that `while (try ...)` is the loop:
 
-### Builder — write and edit
+```c3
+Splitter it = line.split(",");
+while (try piece = it.next()) { ... }
+```
 
-```zig
-var b: text.Builder = .init(gpa);
-defer b.deinit();
+Also: `starts_with`, `ends_with`, `contains`, `index_of`, `last_index_of`,
+`index_of_any`, `count`, `trim`, `trim_chars`, `chomp`, `strip_prefix`,
+`strip_suffix`, `split_any`, `tokenize`, `words`, `lines`, `split_once`,
+`split_last_once`, `codepoints`, `compare_to`, `hash`, `copy`.
 
-try b.append("hello");
-try b.print(", {s}!", .{"world"});
-try b.appendCodepoint('🐢');
-_ = try b.replaceAll("hello", "goodbye");
+### builder - write and edit
 
-const owned = try b.toOwnedSlice();   // caller owns; builder is empty and reusable
-defer gpa.free(owned);
+```c3
+Builder b = text::build(mem);
+defer b.free();
+
+b.append("hello");
+b.printf(", %s!", "world");
+b.append_codepoint(0x1F422)!;
+b.replace_all("hello", "goodbye");
+
+String owned = b.to_owned(mem);   // a copy the caller owns
+defer free(owned);
 ```
 
 The builder carries its own allocator, so calls read as `b.append("x")` rather
-than `b.append(gpa, "x")`. It also exposes a `std.Io.Writer`, so anything in
-the standard library that writes to a stream can write into it:
+than `b.append(gpa, "x")`. It is also an `OutStream`, so anything in the
+standard library that writes to a stream can write into it:
 
-```zig
-const w = b.writer();
-try w.print("{d} items", .{count});
+```c3
+io::fprintf(&b, "%d items", count)!;
 ```
 
-Editing is in-place: `insert`, `replaceRange`, `remove`, `replaceAll`,
-`truncate`, `pop`, `trimEnd`, `clear`.
+Editing is in place: `insert`, `replace_range`, `remove`, `replace_all`,
+`truncate`, `pop`, `trim_end`, `clear`.
 
-### Parser — walk the text
+One difference from the Zig original: `to_owned` copies rather than handing
+the buffer over, because the `DString` underneath owns one allocation and
+giving it away would leave the builder holding a pointer it no longer owns.
 
-```zig
-var p: text.Parser = .init("retries = 0x1F  # comment");
+### parser - walk the text
 
-_ = p.skipWhitespace();
-const key = p.takeIdentifier().?;      // "retries"
-_ = p.skipInlineWhitespace();
-try p.expect('=');
-_ = p.skipInlineWhitespace();
-const value = try p.takeInt(u32, .{}); // 31, base detected from the 0x prefix
+```c3
+Parser p = text::parse("retries = 0x1F  # comment");
+
+p.skip_whitespace();
+View key = p.take_identifier()!;      // "retries"
+p.skip_inline_whitespace();
+p.expect('=')!;
+p.skip_inline_whitespace();
+uint value = p.take_int(uint)!;       // 31, base detected from the 0x prefix
 ```
 
 Four families of method:
 
-- `peek*` — look without moving
-- `eat*` — move if it matches, report whether it did
-- `expect*` — move if it matches, fail if it does not
-- `take*` — consume a run of bytes and return the span
+- `peek_*` - look without moving
+- `eat_*` - move if it matches, report whether it did
+- `expect_*` - move if it matches, fail if it does not
+- `take_*` - consume a run of bytes and return the span
 
 Speculative parsing uses `save` / `restore`:
 
-```zig
-const mark = p.save();
-if (p.takeInt(i64, .{})) |n| {
+```c3
+Mark mark = p.save();
+if (try n = p.take_int(long))
+{
     if (p.check('.')) p.restore(mark);  // actually a float, back out
-} else |_| {}
+}
 ```
 
 For errors, `location()` gives a 1-based line and column (counted in
-codepoints, so it matches what a reader sees) and `currentLine()` gives the
+codepoints, so it matches what a reader sees) and `current_line()` gives the
 whole line for printing a caret underneath.
 
-### utf8 — the byte level
+### utf8 - the byte level
 
-```zig
-var it = utf8.Iterator.init(bytes);
-while (try it.next()) |cp| { ... }        // strict: malformed input is an error
-while (it.nextLossy()) |cp| { ... }       // substitutes U+FFFD, never fails
+```c3
+CodepointIterator it;
+it.init(bytes);
+while (try d = it.next()) { ... }        // strict: malformed input is a fault
+while (try d = it.next_lossy()) { ... }  // substitutes U+FFFD, only stops at the end
 ```
 
 Decoding rejects overlong encodings, surrogate halves and out-of-range
-codepoints, so a successful result is always a valid scalar value. The
-boundary helpers — `isBoundary`, `floorBoundary`, `ceilBoundary`,
-`byteIndexOfCodepoint` — are what you want before slicing at a computed offset.
+codepoints, so a successful result is always a valid scalar value. That
+checking is why this module decodes by hand rather than calling the standard
+library: `conv::utf8_to_char32` accepts an overlong encoding, and a decoder
+that lets one through hands the rest of the program text it cannot re-encode.
 
-### number — parse in the middle of something
+The boundary helpers - `is_boundary`, `floor_boundary`, `ceil_boundary`,
+`byte_index_of_codepoint` - are what you want before slicing at a computed
+offset.
 
-`std.fmt.parseInt` answers "is this whole slice a number?". When walking a
+### number - parse in the middle of something
+
+`String.to_int` answers "is this whole slice a number?". When walking a
 document you usually need the other question, so every routine comes in two
 flavours:
 
-```zig
-const r = try number.scanInt(u32, "123abc", .{});  // r.value == 123, r.len == 3
-try number.parseInt(u32, "123abc", .{});           // error.TrailingBytes
+```c3
+Scanned{uint} r = number::scan_int(uint, "123abc")!;  // r.value 123, r.len 3
+number::parse_int(uint, "123abc");                    // TRAILING_BYTES
 ```
 
 Handles sign, `_` separators, and `0x` / `0o` / `0b` prefixes. Floats get
-`scanFloat` / `parseFloat`, including `inf` and `nan`. Edge cases are decided
+`scan_float` / `parse_float`, including `inf` and `nan`. Edge cases are decided
 so that scanning always makes sensible progress: `"1_"` scans as `1`, `"1e"`
 scans as `1`, and a bare `"0x"` scans as `0`.
 
-### Interner — text in, integer out
+Overflow is checked on every digit rather than at the end, because C3 integer
+arithmetic wraps silently and a scan that wrapped would report a value it never
+read.
 
-```zig
-var interner: text.Interner = .init(gpa);
-defer interner.deinit();
+### interner - text in, integer out
 
-const a = try interner.intern("player.health");
-const b = try interner.intern("player.health");
-// a == b, comparison is now an integer compare
+```c3
+Interner symbols;
+symbols.init(mem);
+defer symbols.free();
 
-interner.resolve(a);  // "player.health"
+StringId a = symbols.intern("player.health");
+StringId b = symbols.intern("player.health");
+// a.equals(b), and comparison is now an integer compare
+
+symbols.resolve(a);  // "player.health"
 ```
 
 Ids are handed out in insertion order and stay valid for the interner's
-lifetime. The text lives in an internal arena, so `resolve` results are
-pointer-stable — you do not free them yourself. `find` and `contains` look up
-without interning.
+lifetime. The text lives in blocks the interner owns and never moves, so
+`resolve` results are pointer-stable - you do not free them yourself. `find`
+and `contains` look up without interning.
 
-### Fixed — a string with no allocator
+### fixed - a string with no allocator
 
-```zig
-const Name = text.Fixed(32);
+```c3
+alias Name = Fixed{32};
 
-var label: Name = .empty;
-try label.print("enemy_{d}", .{id});
-
-// Or fail loudly at compile time if it could never fit:
-const tag = Name.fromLiteral("player.health");
+Name label;
+label.appendf("enemy_%d", id)!;
 ```
 
-`Fixed(n)` stores its bytes in the value itself. Nothing to free, nothing to
-outlive, and it copies like an integer — so it can sit in a component array or
-cross a thread boundary without ceremony. Overflow is an `error.Overflow`
-rather than a reallocation, and `initTruncating` cuts on a UTF-8 boundary when
-you would rather clamp than fail.
+`Fixed{N}` stores its bytes in the value itself. Nothing to free, nothing to
+outlive, and it copies like an integer - so it can sit in a component array or
+cross a thread boundary without ceremony. Overflow is a fault rather than a
+reallocation, and `set_truncating` cuts on a UTF-8 boundary when you would
+rather clamp than fail.
 
 The unused tail is always zeroed, which means two `Fixed` values holding the
 same text are byte-for-byte identical. That is what makes this safe:
 
-```zig
-var names: std.AutoHashMapUnmanaged(Name, Entity) = .empty;
+```c3
+HashMap{Name, Entity} names;
 ```
 
-### path — asset paths
+### path - asset paths
 
-```zig
-path.stem("textures/ui/cursor.png");         // "cursor"
-path.extension("textures/ui/cursor.png");    // ".png"
-path.hasExtension("CURSOR.PNG", "png");      // true
+```c3
+path::stem("textures/ui/cursor.png");         // "cursor"
+path::extension("textures/ui/cursor.png");    // ".png"
+path::has_extension("CURSOR.PNG", "png");     // true
 
-var buf: [256]u8 = undefined;
-try path.normalizeBuf(&buf, "assets\\textures\\..\\ui\\cursor.png");
+char[256] buf;
+path::normalize_buf(&buf, "assets\\textures\\..\\ui\\cursor.png")!;
 // "assets/ui/cursor.png"
 ```
 
-Deliberately *not* `std.fs.path`. A game's asset paths are a platform-
-independent namespace, so output is always `/`, `\` is accepted on input
-because that is what Windows hands you, and nothing here touches the disk.
-`normalize` resolves `.` and `..`, and refuses to let an absolute path escape
-its own root — usually a sign of a malformed asset id.
+Deliberately *not* the standard library's path module. A game's asset paths are
+a platform-independent namespace, so output is always `/`, `\` is accepted on
+input because that is what Windows hands you, and nothing here touches the
+disk. `normalize` resolves `.` and `..`, and refuses to let an absolute path
+escape its own root - usually a sign of a malformed asset id.
 
-### pattern — globs
+### pattern - globs
 
-```zig
-pattern.match("*.png", "cursor.png");                    // true
-pattern.matchPath("textures/*.png", "textures/ui/x.png"); // false, * stops at /
-pattern.matchPath("**/*.wav", "sounds/sfx/hit.wav");      // true
-pattern.match("tile_[0-9][0-9].png", "tile_07.png");      // true
+```c3
+pattern::match("*.png", "cursor.png");                     // true
+pattern::match_path("textures/*.png", "textures/ui/x.png"); // false, * stops at /
+pattern::match_path("**/*.wav", "sounds/sfx/hit.wav");      // true
+pattern::match("tile_[0-9][0-9].png", "tile_07.png");       // true
 ```
 
-Supports `*`, `?`, `[a-z]`, `[!abc]` and `\` escapes. `matchPath` is the
+Supports `*`, `?`, `[a-z]`, `[!abc]` and `\` escapes. `match_path` is the
 gitignore-style mode where `*` stays inside one component and `**` spans them.
 Matching is iterative, never recursive, so a hostile pattern cannot blow the
 stack or go exponential.
 
-### fuzzy — consoles
+### fuzzy - consoles
 
-```zig
-var buf: [8]fuzzy.Ranked = undefined;
-const hits = fuzzy.rank("spwn", &commands, &buf, .{});
-// commands[hits[0].index] == "spawn_enemy"
+```c3
+Ranked[8] buf;
+Ranked[] hits = fuzzy::rank("spwn", commands, &buf);
+// commands[hits[0].index] is "spawn_enemy"
 
-const suggestion = try fuzzy.closest("screenshto", &commands, 2);
+Match suggestion = fuzzy::closest("screenshto", commands, 2)!;
 // "did you mean screenshot?"
 ```
 
 `score` ranks candidates as the user types, favouring consecutive runs, word
-starts (including camelCase) and prefixes. `editDistance` bails out as soon as
+starts (including camelCase) and prefixes. `edit_distance` bails out as soon as
 it passes the budget you give it, because a suggestion prompt only cares about
 near misses. Neither allocates; `rank` writes into a buffer you own.
 
-### wrap — UI text
+### wrap - UI text
 
-```zig
-var it = wrap.iterator(message, .{ .width = 40 });
-while (it.next()) |line| drawText(line.bytes);
+```c3
+LineWrapper it = wrap::wrapper(message, { .width = 40 });
+while (try line = it.next()) draw_text(line.bytes);
 ```
 
 The width budget is measured by a function you supply, because an engine knows
 its own font. Return a glyph advance in pixels and you wrap to a text box:
 
-```zig
-fn advance(cp: u21) u16 { return font.glyph(cp).advance; }
-wrap.iterator(message, .{ .width = box_width_px, .measure = advance });
+```c3
+fn ushort advance(Char32 cp) { return font.glyph(cp).advance; }
+wrap::wrapper(message, { .width = box_width_px, .measure = &advance });
 ```
 
-`wrap.monospace` is built in for the terminal case, where CJK characters take
+`wrap::monospace` is built in for the terminal case, where CJK characters take
 two cells and combining marks take none. Lines are views into the original
 text, so wrapping costs no allocation.
 
 ## Everything together
 
-```zig
-var interner: text.Interner = .init(gpa);
-defer interner.deinit();
+```c3
+Interner symbols;
+symbols.init(mem);
+defer symbols.free();
 
-var p = text.parse("  retries = 0x1F  # inline comment\n");
-_ = p.skipWhitespace();
+Parser p = text::parse("  retries = 0x1F  # inline comment\n");
+p.skip_whitespace();
 
-const key = try interner.internView(p.takeIdentifier().?);
-_ = p.skipInlineWhitespace();
-try p.expect('=');
-_ = p.skipInlineWhitespace();
-const value = try p.takeInt(u32, .{});
+StringId key = symbols.intern_view(p.take_identifier()!);
+p.skip_inline_whitespace();
+p.expect('=')!;
+p.skip_inline_whitespace();
+uint value = p.take_int(uint)!;
 
-// interner.resolve(key) == "retries", value == 31
-// p.rest().trim() == "# inline comment", still a view into the original input
+// symbols.resolve(key) is "retries", value is 31
+// p.rest().trim() is "# inline comment", still a view into the original input
 ```
 
 ## Build
 
 ```bash
-zig build test        # run the test suite
-zig build example     # build and run the demo tour
-zig build docs        # generate API docs into zig-out/docs
+c3c test          # run the test suite
+c3c run demo      # build and run the demo tour
+```
+
+## Layout
+
+```
+fluxion_text.c3l/manifest.json   what a consumer's build reads
+src/                             the library, one module per file
+examples/demo.c3                 the tour
+project.json5                    this repository's own build: tests and the demo
 ```
 
 ## Requirements
 
-Zig 0.16.0.
+C3 0.8.3.
 
 ## License
 
 `SPDX-License-Identifier: CC0-1.0`
 
-[CC0 1.0 Universal](LICENSE) — public domain dedication. Do whatever you like
+[CC0 1.0 Universal](LICENSE) - public domain dedication. Do whatever you like
 with this, no attribution required.
